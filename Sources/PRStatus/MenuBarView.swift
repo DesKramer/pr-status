@@ -3,56 +3,195 @@ import SwiftUI
 
 struct MenuBarView: View {
     @ObservedObject var model: AppModel
+    @State private var isChoosingRepository = false
+    @State private var repositoryQuery = ""
+
+    private var showsRepositoryPicker: Bool {
+        model.selectedRepository == nil || isChoosingRepository
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
 
-            if let errorMessage = model.errorMessage {
-                errorView(errorMessage)
-            }
-
-            if model.pullRequests.isEmpty && !model.isRefreshing {
-                emptyView
+            if showsRepositoryPicker {
+                repositoryPicker
             } else {
-                pullRequestList
+                pullRequestContent
             }
 
             footer
         }
-        .frame(width: 390)
+        .frame(width: 410)
         .task {
-            await model.refresh()
+            if model.selectedRepository == nil {
+                await model.loadRepositories()
+            } else {
+                await model.refresh()
+            }
         }
     }
 
     private var header: some View {
         HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Cosine PRs")
+            VStack(alignment: .leading, spacing: 3) {
+                Text("PR Status")
                     .font(.headline)
-                Text(GitHubService.repository)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+
+                Button {
+                    if showsRepositoryPicker && model.selectedRepository != nil {
+                        isChoosingRepository = false
+                    } else {
+                        isChoosingRepository = true
+                        Task { await model.loadRepositories() }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "shippingbox")
+                        Text(model.selectedRepository ?? "Choose a repository")
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Image(systemName: showsRepositoryPicker && model.selectedRepository != nil ? "chevron.up" : "chevron.down")
+                            .font(.caption2)
+                    }
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(model.selectedRepository == nil ? Color.accentColor : Color.secondary)
+                .help(model.selectedRepository == nil ? "Choose a repository" : "Change repository")
             }
 
             Spacer()
 
-            if model.isRefreshing {
-                ProgressView()
-                    .controlSize(.small)
-            }
+            if showsRepositoryPicker {
+                if model.isLoadingRepositories {
+                    ProgressView()
+                        .controlSize(.small)
+                }
 
-            Button {
-                Task { await model.refresh() }
-            } label: {
-                Image(systemName: "arrow.clockwise")
+                Button {
+                    Task { await model.loadRepositories(force: true) }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.isLoadingRepositories)
+                .help("Reload repositories")
+            } else {
+                if model.isRefreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
+                Button {
+                    Task { await model.refresh() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.isRefreshing)
+                .help("Refresh pull requests")
             }
-            .buttonStyle(.borderless)
-            .disabled(model.isRefreshing)
-            .help("Refresh")
         }
         .padding(14)
+    }
+
+    @ViewBuilder
+    private var pullRequestContent: some View {
+        if let errorMessage = model.errorMessage {
+            errorView(errorMessage)
+        }
+
+        if model.pullRequests.isEmpty && !model.isRefreshing {
+            emptyPullRequestView
+        } else {
+            pullRequestList
+        }
+    }
+
+    private var repositoryPicker: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Search all repositories", text: $repositoryQuery)
+                    .textFieldStyle(.plain)
+                if !repositoryQuery.isEmpty {
+                    Button {
+                        repositoryQuery = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
+
+            if let repositoryErrorMessage = model.repositoryErrorMessage {
+                errorView(repositoryErrorMessage)
+            }
+
+            if model.repositories.isEmpty {
+                repositoryEmptyView
+            } else if filteredRepositories.isEmpty {
+                ContentUnavailableView.search(text: repositoryQuery)
+                    .frame(height: 220)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(filteredRepositories.enumerated()), id: \.element.id) { index, repository in
+                            if index > 0 {
+                                Divider()
+                                    .padding(.leading, 42)
+                            }
+
+                            RepositoryRow(
+                                repository: repository,
+                                isSelected: repository.fullName == model.selectedRepository
+                            ) {
+                                model.selectRepository(repository)
+                                isChoosingRepository = false
+                                repositoryQuery = ""
+                            }
+                        }
+                    }
+                }
+                .frame(height: min(CGFloat(filteredRepositories.count) * 48, 480))
+            }
+        }
+    }
+
+    private var filteredRepositories: [Repository] {
+        RepositorySearch.filter(model.repositories, query: repositoryQuery)
+    }
+
+    private var repositoryEmptyView: some View {
+        VStack(spacing: 8) {
+            if model.isLoadingRepositories {
+                ProgressView()
+                Text("Loading repositories…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Image(systemName: "shippingbox")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                Text(model.repositoryErrorMessage == nil ? "No repositories found" : "Could not load repositories")
+                    .font(.subheadline.weight(.medium))
+                if model.repositoryErrorMessage == nil {
+                    Text("The signed-in GitHub account has no accessible repositories.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 34)
     }
 
     private func errorView(_ message: String) -> some View {
@@ -70,7 +209,7 @@ struct MenuBarView: View {
         .padding(.bottom, 8)
     }
 
-    private var emptyView: some View {
+    private var emptyPullRequestView: some View {
         VStack(spacing: 8) {
             Image(systemName: "arrow.triangle.branch")
                 .font(.title2)
@@ -110,7 +249,13 @@ struct MenuBarView: View {
 
     private var footer: some View {
         HStack {
-            if let lastUpdated = model.lastUpdated {
+            if showsRepositoryPicker {
+                if model.repositories.isEmpty {
+                    Text("Uses your gh login")
+                } else {
+                    Text("\(model.repositories.count) repositories")
+                }
+            } else if let lastUpdated = model.lastUpdated {
                 Text("Updated ") + Text(lastUpdated, style: .relative)
             } else {
                 Text("Uses your gh login")
@@ -128,6 +273,41 @@ struct MenuBarView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(.quaternary.opacity(0.45))
+    }
+}
+
+private struct RepositoryRow: View {
+    let repository: Repository
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: repository.isPrivate ? "lock.fill" : "shippingbox")
+                    .frame(width: 18)
+                    .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(repository.name)
+                        .font(.subheadline.weight(.medium))
+                    Text(repository.owner)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .contentShape(Rectangle())
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+        }
+        .buttonStyle(.plain)
     }
 }
 

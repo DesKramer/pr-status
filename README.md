@@ -2,11 +2,12 @@
 
 <img width="404" height="625" alt="Screenshot 2026-11-03 at 09 56 46" src="https://github.com/user-attachments/assets/f2c64c9f-2134-45f7-981c-30eb2a973fd8" />
 
-
-A small macOS menu bar app for open pull requests authored by you in `CosineAI/cosine-monorepo`.
+A small macOS menu bar app for open pull requests authored by you. Choose any repository available to your signed-in GitHub CLI account.
 
 It shows:
 
+- A searchable repository picker with fuzzy matching
+- The selected repository, persisted between launches
 - Branch name and PR number
 - Passing, failed, and running CI checks
 - Approval or changes-requested status

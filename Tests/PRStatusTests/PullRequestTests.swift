@@ -8,9 +8,12 @@ final class PullRequestTests: XCTestCase {
             throw XCTSkip("Set PR_STATUS_LIVE_TEST=1 to query GitHub")
         }
 
-        let pullRequests = try await GitHubService().fetchPullRequests()
+        let service = GitHubService()
+        let repositories = try await service.fetchRepositories()
+        let repository = try XCTUnwrap(repositories.first)
+        let pullRequests = try await service.fetchPullRequests(repository: repository.fullName)
 
-        XCTAssertFalse(pullRequests.isEmpty)
+        XCTAssertFalse(repositories.isEmpty)
         XCTAssertTrue(pullRequests.allSatisfy { $0.url.host == "github.com" })
     }
 
@@ -30,6 +33,27 @@ final class PullRequestTests: XCTestCase {
         XCTAssertEqual(summary.pending, 2)
         XCTAssertEqual(summary.total, 5)
         XCTAssertEqual(summary.text, "2/5 passing · 1 failed · 2 running")
+    }
+
+    func testRepositorySearchUsesFuzzySubsequenceMatching() {
+        let repositories = [
+            Repository(fullName: "CosineAI/cosine-monorepo", isPrivate: true),
+            Repository(fullName: "DesKramer/pr-status", isPrivate: false),
+            Repository(fullName: "apple/swift", isPrivate: false)
+        ]
+
+        let matches = RepositorySearch.filter(repositories, query: "csmr")
+
+        XCTAssertEqual(matches.map(\.fullName), ["CosineAI/cosine-monorepo"])
+    }
+
+    func testRepositorySearchReturnsAllRepositoriesForEmptyQuery() {
+        let repositories = [
+            Repository(fullName: "CosineAI/cosine-monorepo", isPrivate: true),
+            Repository(fullName: "DesKramer/pr-status", isPrivate: false)
+        ]
+
+        XCTAssertEqual(RepositorySearch.filter(repositories, query: ""), repositories)
     }
 
     func testApprovalIsReadFromLatestReviews() throws {

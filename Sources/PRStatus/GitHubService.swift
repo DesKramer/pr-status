@@ -1,11 +1,17 @@
 import Foundation
 
 struct GitHubService: Sendable {
-    static let repository = "CosineAI/cosine-monorepo"
-
-    func fetchPullRequests() async throws -> [PullRequest] {
+    func fetchPullRequests(repository: String) async throws -> [PullRequest] {
         try await Task.detached(priority: .utility) {
-            let data = try Self.runGitHubCLI()
+            let data = try Self.runGitHubCLI(arguments: [
+                "pr", "list",
+                "--repo", repository,
+                "--author", "@me",
+                "--state", "open",
+                "--limit", "100",
+                "--json", "number,title,headRefName,url,isDraft,reviewDecision,statusCheckRollup,latestReviews,updatedAt"
+            ])
+
             do {
                 return try JSONDecoder().decode([PullRequest].self, from: data)
             } catch {
@@ -14,19 +20,31 @@ struct GitHubService: Sendable {
         }.value
     }
 
-    private static func runGitHubCLI() throws -> Data {
+    func fetchRepositories() async throws -> [Repository] {
+        try await Task.detached(priority: .utility) {
+            let data = try Self.runGitHubCLI(arguments: [
+                "api", "--paginate", "--slurp",
+                "user/repos?per_page=100&affiliation=owner,collaborator,organization_member&sort=updated"
+            ])
+
+            do {
+                let pages = try JSONDecoder().decode([[Repository]].self, from: data)
+                var seen = Set<String>()
+                return pages
+                    .flatMap { $0 }
+                    .filter { seen.insert($0.fullName).inserted }
+            } catch {
+                throw GitHubServiceError.invalidResponse(error.localizedDescription)
+            }
+        }.value
+    }
+
+    private static func runGitHubCLI(arguments: [String]) throws -> Data {
         let process = Process()
         let pipe = Pipe()
 
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [
-            "gh", "pr", "list",
-            "--repo", repository,
-            "--author", "@me",
-            "--state", "open",
-            "--limit", "100",
-            "--json", "number,title,headRefName,url,isDraft,reviewDecision,statusCheckRollup,latestReviews,updatedAt"
-        ]
+        process.arguments = ["gh"] + arguments
         process.standardOutput = pipe
         process.standardError = pipe
 
